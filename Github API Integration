@@ -1,0 +1,194 @@
+// GitHub Actions API Integration Module
+// Install required package: npm install node-fetch
+
+const fetch = require('node-fetch');
+
+class GitHubActionsAPI {
+  constructor(token, owner, repo) {
+    this.token = token;
+    this.owner = owner;
+    this.repo = repo;
+    this.baseUrl = 'https://api.github.com';
+  }
+
+  // Helper method for making authenticated requests
+  async makeRequest(endpoint) {
+    const url = `${this.baseUrl}${endpoint}`;
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${this.token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'Pipeline-Visualizer'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`GitHub API Error: ${response.status} ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
+  // Get all workflows for the repository
+  async getWorkflows() {
+    const endpoint = `/repos/${this.owner}/${this.repo}/actions/workflows`;
+    const data = await this.makeRequest(endpoint);
+    return data.workflows;
+  }
+
+  // Get workflow runs (with optional filters)
+  async getWorkflowRuns(options = {}) {
+    const {
+      workflowId = null,
+      branch = null,
+      status = null, // completed, action_required, cancelled, failure, neutral, skipped, stale, success, timed_out, in_progress, queued, requested, waiting
+      perPage = 30,
+      page = 1
+    } = options;
+
+    let endpoint = `/repos/${this.owner}/${this.repo}/actions/runs?per_page=${perPage}&page=${page}`;
+    
+    if (workflowId) {
+      endpoint = `/repos/${this.owner}/${this.repo}/actions/workflows/${workflowId}/runs?per_page=${perPage}&page=${page}`;
+    }
+    
+    if (branch) endpoint += `&branch=${branch}`;
+    if (status) endpoint += `&status=${status}`;
+
+    const data = await this.makeRequest(endpoint);
+    return data.workflow_runs;
+  }
+
+  // Get detailed information about a specific run
+  async getRunDetails(runId) {
+    const endpoint = `/repos/${this.owner}/${this.repo}/actions/runs/${runId}`;
+    return await this.makeRequest(endpoint);
+  }
+
+  // Get jobs for a specific workflow run
+  async getRunJobs(runId) {
+    const endpoint = `/repos/${this.owner}/${this.repo}/actions/runs/${runId}/jobs`;
+    const data = await this.makeRequest(endpoint);
+    return data.jobs;
+  }
+
+  // Get timing information for a specific run
+  async getRunTiming(runId) {
+    const endpoint = `/repos/${this.owner}/${this.repo}/actions/runs/${runId}/timing`;
+    return await this.makeRequest(endpoint);
+  }
+
+  // Calculate metrics from workflow runs
+  calculateMetrics(runs) {
+    const total = runs.length;
+    const successful = runs.filter(r => r.conclusion === 'success').length;
+    const failed = runs.filter(r => r.conclusion === 'failure').length;
+    const cancelled = runs.filter(r => r.conclusion === 'cancelled').length;
+
+    // Calculate average duration (in minutes)
+    const completedRuns = runs.filter(r => r.conclusion);
+    const avgDuration = completedRuns.reduce((sum, run) => {
+      const start = new Date(run.created_at);
+      const end = new Date(run.updated_at);
+      return sum + (end - start) / 1000 / 60;
+    }, 0) / completedRuns.length;
+
+    return {
+      total,
+      successful,
+      failed,
+      cancelled,
+      successRate: ((successful / total) * 100).toFixed(2),
+      avgDuration: avgDuration.toFixed(2),
+      lastRun: runs[0] ? {
+        status: runs[0].status,
+        conclusion: runs[0].conclusion,
+        createdAt: runs[0].created_at,
+        completedAt: runs[0].updated_at
+      } : null
+    };
+  }
+
+  // Get comprehensive pipeline health data
+  async getPipelineHealth(days = 30) {
+    const runs = await this.getWorkflowRuns({ perPage: 100 });
+    
+    // Filter runs within the specified time period
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+    
+    const recentRuns = runs.filter(run => 
+      new Date(run.created_at) >= cutoffDate
+    );
+
+    const metrics = this.calculateMetrics(recentRuns);
+
+    // Get detailed job information for the most recent run
+    let recentJobDetails = null;
+    if (recentRuns.length > 0) {
+      const jobs = await this.getRunJobs(recentRuns[0].id);
+      recentJobDetails = jobs.map(job => ({
+        name: job.name,
+        status: job.status,
+        conclusion: job.conclusion,
+        duration: job.completed_at && job.started_at 
+          ? ((new Date(job.completed_at) - new Date(job.started_at)) / 1000 / 60).toFixed(2)
+          : null,
+        steps: job.steps.map(step => ({
+          name: step.name,
+          status: step.status,
+          conclusion: step.conclusion,
+          duration: step.completed_at && step.started_at
+            ? ((new Date(step.completed_at) - new Date(step.started_at)) / 1000).toFixed(2)
+            : null
+        }))
+      }));
+    }
+
+    return {
+      metrics,
+      recentRuns: recentRuns.slice(0, 10),
+      recentJobDetails
+    };
+  }
+}
+
+// Example usage
+async function main() {
+  // Get your GitHub Personal Access Token from: https://github.com/settings/tokens
+  // Required scopes: repo, workflow
+  const token = 'YOUR_GITHUB_TOKEN';
+  const owner = 'REPO_OWNER'; // e.g., 'facebook'
+  const repo = 'REPO_NAME';   // e.g., 'react'
+
+  const api = new GitHubActionsAPI(token, owner, repo);
+
+  try {
+    console.log('Fetching workflows...');
+    const workflows = await api.getWorkflows();
+    console.log(`Found ${workflows.length} workflows`);
+
+    console.log('\nFetching recent workflow runs...');
+    const runs = await api.getWorkflowRuns({ perPage: 10 });
+    console.log(`Found ${runs.length} recent runs`);
+
+    console.log('\nCalculating pipeline health...');
+    const health = await api.getPipelineHealth(30);
+    console.log('Metrics:', health.metrics);
+
+    if (health.recentJobDetails) {
+      console.log('\nMost Recent Run Jobs:');
+      health.recentJobDetails.forEach(job => {
+        console.log(`- ${job.name}: ${job.conclusion} (${job.duration}min)`);
+      });
+    }
+
+  } catch (error) {
+    console.error('Error:', error.message);
+  }
+}
+
+// Uncomment to run the example
+// main();
+
+module.exports = GitHubActionsAPI;
