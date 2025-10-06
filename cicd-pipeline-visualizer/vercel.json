@@ -1,40 +1,37 @@
 {
   "version": 2,
   
-  // 1. Keep the client static build, as it's separate and necessary
-  // The 'builds' array is now only for the static part
-  "builds": [
-    {
-      "src": "client/package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "build"
-      }
-    }
-  ],
+  // 1. Remove 'builds' entirely. Vercel will infer the static build
+  // from your project settings (like the 'build' command).
 
-  // 2. The Node function configuration is now entirely here
+  // 2. Serverless Function Configuration
   "functions": {
     "server/index.js": {
-      "runtime": "@vercel/node@3.0.0", // Specify the Node runtime
-      "maxDuration": 30, // From the original 'functions' block
-      // Include the settings that were in 'builds' config
-      "memory": 1024, // Example: default memory, can be adjusted
-      "maxLambdaSize": "50mb" // From the original 'builds' config
+      // Pinning the runtime to Node 20 (or the latest stable version)
+      "runtime": "@vercel/node@20.x", 
+      "maxDuration": 30, 
+      "maxLambdaSize": "50mb",
+      "memory": 1024 
     }
   },
 
-  // 3. Keep routes and env unchanged
-  "routes": [
+  // 3. Routing Rules (using 'rewrites' for SPA static routing)
+  "rewrites": [
+    // API Route: Direct all /api/* requests to the Node function
     {
-      "src": "/api/(.*)",
-      "dest": "/server/index.js"
+      "source": "/api/(.*)",
+      "destination": "/server/index.js"
     },
+    // Static Route (SPA Fallback): Rewrite all other requests to the index.html
+    // This assumes your static build output (set via dashboard or 'distDir' in a local config)
+    // serves index.html at the root of the deployment.
     {
-      "src": "/(.*)",
-      "dest": "/client/$1"
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ],
+
+  // 4. Environment Variables
   "env": {
     "NODE_ENV": "production"
   }
