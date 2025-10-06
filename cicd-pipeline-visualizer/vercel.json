@@ -1,13 +1,9 @@
 {
   "version": 2,
+  
+  // 1. Keep the client static build, as it's separate and necessary
+  // The 'builds' array is now only for the static part
   "builds": [
-    {
-      "src": "server/index.js",
-      "use": "@vercel/node",
-      "config": {
-        "maxLambdaSize": "50mb"
-      }
-    },
     {
       "src": "client/package.json",
       "use": "@vercel/static-build",
@@ -16,6 +12,19 @@
       }
     }
   ],
+
+  // 2. The Node function configuration is now entirely here
+  "functions": {
+    "server/index.js": {
+      "runtime": "@vercel/node@3.0.0", // Specify the Node runtime
+      "maxDuration": 30, // From the original 'functions' block
+      // Include the settings that were in 'builds' config
+      "memory": 1024, // Example: default memory, can be adjusted
+      "maxLambdaSize": "50mb" // From the original 'builds' config
+    }
+  },
+
+  // 3. Keep routes and env unchanged
   "routes": [
     {
       "src": "/api/(.*)",
@@ -28,10 +37,5 @@
   ],
   "env": {
     "NODE_ENV": "production"
-  },
-  "functions": {
-    "server/index.js": {
-      "maxDuration": 30
-    }
   }
 }
